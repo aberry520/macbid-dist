@@ -42,11 +42,17 @@ jobs:
           git diff --cached --quiet || git commit -m "MAC.BID deals $STAMP"
           git push
       - name: Upload CSV to Google Drive (only if secrets are set)
-        if: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON != '' && secrets.DRIVE_FOLDER_ID != '' }}
+        # NOTE: GitHub does not allow secrets in an `if:` condition, so the
+        # check lives in the shell script below instead — it skips quietly
+        # when the secrets aren't set.
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
         run: |
+          if [ -z "$GOOGLE_SERVICE_ACCOUNT_JSON" ] || [ -z "$DRIVE_FOLDER_ID" ]; then
+            echo "Drive secrets not set — skipping Drive upload."
+            exit 0
+          fi
           pip install google-api-python-client google-auth
           python drive_upload.py "reports/$STAMP.csv"
       - name: Save report as artifact (backup)
