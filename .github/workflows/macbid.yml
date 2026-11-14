@@ -1,0 +1,29 @@
+# MAC.BID Deal Finder — runs on GitHub's computers, free, on a schedule.
+# Upload this whole folder to a GitHub repo (it must include this file at
+# .github/workflows/macbid.yml). No secrets or logins needed.
+# Schedule is in UTC: 22:00 UTC = 5:00 PM Eastern in winter (EST).
+# In summer (EDT) change the cron line to '0 21 * * *'.
+name: MAC.BID 5pm deal report
+
+on:
+  schedule:
+    - cron: '0 22 * * *'
+  workflow_dispatch:  # lets you also run it manually from the Actions tab
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run deal finder
+        run: |
+          mkdir -p reports
+          python macbid_deals.py --out "reports/$(date -u +%Y%m%d-%H%M).md"
+      - name: Save report
+        uses: actions/upload-artifact@v4
+        with:
+          name: macbid-report
+          path: reports/

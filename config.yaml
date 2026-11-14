@@ -1,0 +1,21 @@
+# MAC.BID deal finder — settings
+# Change any of these and the next 5pm run picks them up. No code changes needed.
+# Warehouse: the MAC.BID pickup location name, exactly as MAC.BID spells it,
+# e.g. Greenville, Anderson, Spartanburg, Cowpens, Rock Hill, Gastonia.
+# A lot is included when it is AT this warehouse, or when this warehouse is
+# in the lot's transfer_locations (it can be transferred there).
+warehouse: Anderson
+
+# Only lots with a retail value at or above this are reported.
+min_retail: 100
+
+# Only lots whose CURRENT BID is at or below this are reported.
+# This is the bid price only — buyer's premium, lot fee and tax are NOT added.
+max_bid: 30
+
+# How far ahead to look, in hours from the run time. At a 5pm run, 7 hours
+# covers the whole evening close (lots close from 6pm Eastern).
+look_ahead_hours: 7
+
+# Max lots in the report. Sorted by closing time, soonest first.
+max_results: 50
