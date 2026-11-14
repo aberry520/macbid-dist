@@ -13,12 +13,17 @@ settings in config.yaml next to this script:
 Usage:
   python3 macbid_deals.py [--config config.yaml] [--min-retail N] [--max-bid N]
                           [--warehouse NAME] [--look-ahead-hours N] [--out FILE]
+                          [--csv-out FILE]
   Overrides on the command line beat the config file.
 
-Output: a Markdown report printed to stdout. With --out, also saved to a file.
+Output: a Markdown report printed to stdout. With --out, also saved to a file —
+and a CSV version is written alongside it automatically (same name, .csv
+extension), unless --csv-out names a different CSV file. With --csv-out alone,
+only the CSV is written (no Markdown file), but the Markdown is still printed.
 Exit code 0 even when no lots match (the report just says so); 1 on error.
 """
 import argparse
+import csv
 import datetime
 import json
 import os
@@ -110,6 +115,7 @@ def main():
     ap.add_argument("--look-ahead-hours", type=float)
     ap.add_argument("--max-results", type=int)
     ap.add_argument("--out")
+    ap.add_argument("--csv-out")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
@@ -134,6 +140,35 @@ def main():
     hits = result.get("hits", [])
     found = result.get("found", len(hits))
 
+    # One row per lot, used for both the Markdown report and the CSV.
+    rows = []
+    for hit in hits[:max_results]:
+        d = hit["document"]
+        close = datetime.datetime.fromtimestamp(
+            d["expected_closing_utc"], datetime.timezone.utc).astimezone(ET)
+        mins_left = max(0, int((d["expected_closing_utc"] - now_epoch) / 60))
+        hours, mins = divmod(mins_left, 60)
+        retail = d.get("retail_price") or 0
+        bid = d.get("current_bid") or 0
+        rows.append({
+            "product": (d.get("product_name") or "").strip(),
+            "lot_number": d.get("lot_number"),
+            "auction_location": d.get("auction_location"),
+            "at_or_transferable": ("at warehouse"
+                                   if d.get("auction_location") == warehouse
+                                   else "transferable"),
+            "retail_price": retail,
+            "current_bid": bid,
+            "discount_pct": int(round(100 * (1 - bid / retail))) if retail else 0,
+            "condition": d.get("condition", ""),
+            "category": d.get("category", ""),
+            "closes_et": f"{close:%Y-%m-%d %-I:%M %p}",
+            "minutes_left": mins_left,
+            "time_left": f"{hours}h {mins}m" if hours else f"{mins}m",
+            "total_bids": d.get("total_bids", 0),
+            "url": f"https://www.mac.bid/?aid={d.get('auction_id')}&lid={d.get('lot_number')}",
+        })
+
     lines = []
     lines.append(f"# MAC.BID deals — {run_et:%A %B %d, %Y at %-I:%M %p ET}")
     lines.append("")
@@ -142,35 +177,40 @@ def main():
     lines.append(f"Found: **{found}** lot{'s' if found != 1 else ''} closing by {(now + datetime.timedelta(hours=look_ahead)).astimezone(ET):%-I:%M %p ET}")
     lines.append("")
 
-    if not hits:
+    if not rows:
         lines.append("No lots match right now. Nothing to bid on under these settings.")
     else:
-        for hit in hits[:max_results]:
-            d = hit["document"]
-            close = datetime.datetime.fromtimestamp(
-                d["expected_closing_utc"], datetime.timezone.utc).astimezone(ET)
-            mins_left = max(0, int((d["expected_closing_utc"] - now_epoch) / 60))
-            hours, mins = divmod(mins_left, 60)
-            left = f"{hours}h {mins}m" if hours else f"{mins}m"
-            retail = d.get("retail_price") or 0
-            bid = d.get("current_bid") or 0
-            pct = int(round(100 * (1 - bid / retail))) if retail else 0
-            at = "at warehouse" if d.get("auction_location") == warehouse else "transferable"
-            url = f"https://www.mac.bid/?aid={d.get('auction_id')}&lid={d.get('lot_number')}"
-            lines.append(f"## {d.get('product_name', '').strip()} — Lot {d.get('lot_number')}")
-            lines.append(f"- **Retail {fmt_money(retail)} · current bid {fmt_money(bid)}** ({pct}% off retail) · {d.get('condition', '')} · {d.get('category', '')}")
-            lines.append(f"- Location: {d.get('auction_location')} ({at}) · Closes **{close:%-I:%M %p ET}** ({left} left) · {d.get('total_bids', 0)} bids")
-            lines.append(f"- [Open lot on mac.bid]({url})")
+        for r in rows:
+            lines.append(f"## {r['product']} — Lot {r['lot_number']}")
+            lines.append(f"- **Retail {fmt_money(r['retail_price'])} · current bid {fmt_money(r['current_bid'])}** ({r['discount_pct']}% off retail) · {r['condition']} · {r['category']}")
+            lines.append(f"- Location: {r['auction_location']} ({r['at_or_transferable']}) · Closes **{r['closes_et']} ET** ({r['time_left']} left) · {r['total_bids']} bids")
+            lines.append(f"- [Open lot on mac.bid]({r['url']})")
             lines.append("")
-        if found > len(hits[:max_results]):
-            lines.append(f"_Showing the {len(hits[:max_results])} soonest-closing of {found} matches._")
+        if found > len(rows):
+            lines.append(f"_Showing the {len(rows)} soonest-closing of {found} matches._")
 
     report = "\n".join(lines)
     print(report)
     if args.out:
-        os.makedirs(os.path.dirname(args.out), exist_ok=True)
+        os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
         with open(args.out, "w") as f:
             f.write(report + "\n")
+    # CSV: explicit --csv-out wins; otherwise a .csv sits next to the Markdown.
+    csv_path = args.csv_out
+    if not csv_path and args.out:
+        stem, _ext = os.path.splitext(args.out)
+        csv_path = stem + ".csv"
+    if csv_path:
+        os.makedirs(os.path.dirname(csv_path) or ".", exist_ok=True)
+        fields = ["product", "lot_number", "auction_location", "at_or_transferable",
+                  "retail_price", "current_bid", "discount_pct", "condition",
+                  "category", "closes_et", "minutes_left", "total_bids", "url"]
+        with open(csv_path, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=fields)
+            w.writeheader()
+            for r in rows:
+                w.writerow({k: r[k] for k in fields})
+        print(f"CSV saved to {csv_path}", file=sys.stderr)
     return 0
 
 
