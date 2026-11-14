@@ -1,8 +1,15 @@
 # MAC.BID Deal Finder — runs on GitHub's computers, free, on a schedule.
 # Upload this whole folder to a GitHub repo (it must include this file at
-# .github/workflows/macbid.yml). No secrets or logins needed.
+# .github/workflows/macbid.yml). No secrets or logins needed for the scan.
 # Schedule is in UTC: 22:00 UTC = 5:00 PM Eastern in winter (EST).
 # In summer (EDT) change the cron line to '0 21 * * *'.
+#
+# What each run does:
+#   1. Runs the scan, saving a Markdown report AND a CSV to reports/
+#   2. Commits those files back to the repo, so you can just open the
+#      reports/ folder on GitHub — no downloading artifacts.
+#   3. If you set up the Google Drive secrets (see README.md), uploads the
+#      CSV to your Drive folder too. Without those secrets, step 3 is skipped.
 name: MAC.BID 5pm deal report
 
 on:
@@ -10,19 +17,39 @@ on:
     - cron: '0 22 * * *'
   workflow_dispatch:  # lets you also run it manually from the Actions tab
 
+permissions:
+  contents: write  # needed so the workflow can commit reports back to the repo
+
 jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - name: Run deal finder
         run: |
           mkdir -p reports
-          python macbid_deals.py --out "reports/$(date -u +%Y%m%d-%H%M).md"
-      - name: Save report
+          STAMP=$(date -u +%Y%m%d-%H%M)
+          python macbid_deals.py --out "reports/$STAMP.md"
+          echo "STAMP=$STAMP" >> "$GITHUB_ENV"
+      - name: Commit report to repo
+        run: |
+          git config user.name "macbid-bot"
+          git config user.email "macbid-bot@users.noreply.github.com"
+          git add reports/
+          git diff --cached --quiet || git commit -m "MAC.BID deals $STAMP"
+          git push
+      - name: Upload CSV to Google Drive (only if secrets are set)
+        if: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON != '' && secrets.DRIVE_FOLDER_ID != '' }}
+        env:
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
+        run: |
+          pip install google-api-python-client google-auth
+          python drive_upload.py "reports/$STAMP.csv"
+      - name: Save report as artifact (backup)
         uses: actions/upload-artifact@v4
         with:
           name: macbid-report
