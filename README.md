@@ -90,6 +90,48 @@ Note: the schedule in the workflow file is in UTC. 5pm Eastern is 22:00 UTC
 in winter (EST) and 21:00 UTC in summer (EDT). The file is set to 22:00 UTC;
 change the `cron:` line to `0 21 * * *` when daylight saving starts.
 
+## Automatic starring (GitHub Action, optional)
+
+`star_action.py` + `.github/workflows/star.yml` star the evening's deals
+for you — no computer needed, no token to paste each time. Each day at
+5:10pm Eastern (just after the report run) it refreshes the MAC.BID login,
+stars the lots matching `config.yaml`, and saves the new login token back
+for the next run.
+
+**One-time setup — three secrets** (repo → **Settings → Secrets and
+variables → Actions → New repository secret**):
+
+1. `MACBID_REFRESH_TOKEN` — in Chrome, signed in to mac.bid, press F12 →
+   **Application** → **Local Storage** → `https://www.mac.bid` → click
+   `mac_auths`. Copy the `refresh_token` value (the long string starting
+   `eyJ...`). Paste it as the secret. Re-copy it after any manual
+   sign-in, since every refresh replaces it with a new one.
+2. `MACBID_DEVICE_ID` — same place, the `device_id` entry.
+3. `GH_PAT` — a **classic** personal access token from
+   https://github.com/settings/tokens (scope: `repo`). The workflow needs
+   it to save the rotated token back into the secret — the built-in
+   workflow token can't update secrets. Without it, starring still runs
+   once, but the next run fails because the old token is dead.
+
+**How it stays logged in:** the MAC.BID site keeps a refresh token in the
+browser and uses it to stay signed in without another SMS code. The
+workflow does the same: `PUT /auth/refresh-token` with the stored token
+gets a fresh 30-minute access token plus a new refresh token. The window
+rolls 3 days forward on every refresh, so a daily run keeps it alive
+indefinitely — but if no run succeeds for 3 days straight, the token dies
+and you'll need to sign in again and update the secret by hand.
+
+**Safety notes:** the refresh token is a full-account credential (it can
+bid and buy, not just star), so keep the repo private and never paste the
+token anywhere except the secret itself. The workflow never prints any
+token value, and the rotated token passes through a file that is deleted
+right after use. The script itself never bids or buys — it only adds
+watchlist stars, and only counts a star when the site confirms it.
+
+To test it right away: **Actions → Star MAC.BID deals → Run workflow**.
+If the refresh token is stale you'll see a clear error telling you to
+re-copy it from `mac_auths`.
+
 ## Google Drive — get the CSV there automatically
 
 If you'd rather have each day's CSV land in a Google Drive folder, the
