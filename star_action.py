@@ -126,7 +126,9 @@ def refresh_login(refresh_token, device_id):
 
 
 def star_one(token, lot_id, lot_number):
-    """Star one lot. Returns (ok, note). Retries once on a soft failure."""
+    """Star one lot. Returns (ok, note, auth_failed). Retries once on a
+    soft failure. auth_failed is True when the site rejected the login
+    itself (401), so the caller can try a different token."""
     for attempt in (1, 2):
         code, data = curl_json(
             "POST", WATCHLIST_URL,
@@ -134,18 +136,18 @@ def star_one(token, lot_id, lot_number):
              "-H", "Content-Type: application/json"] + STAR_HEADERS,
             {"auction_lot_id": lot_id})
         if code == 401:
-            return False, "login token rejected (401)"
+            return False, "login token rejected (401)", True
         if code == 200 and isinstance(data, dict) \
                 and data.get("watchlist_date_created"):
-            return True, "starred"
+            return True, "starred", False
         if code == 200 and isinstance(data, dict) and data.get("id") == lot_id:
-            return True, "starred (no date in reply, id matches)"
+            return True, "starred (no date in reply, id matches)", False
         note = f"attempt {attempt}: HTTP {code}"
         if isinstance(data, dict) and data.get("message"):
             note += f" — {data['message']}"
         if attempt == 1:
             time.sleep(1)
-    return False, note
+    return False, note, False
 
 
 def get_watchlist_ids(token):
@@ -271,16 +273,35 @@ def main():
     if already is not None:
         print(f"Watchlist already holds {len(already)} lot(s).")
 
+    # Which token the site accepts as the login for starring is not fully
+    # settled: the refresh response's access_token is the documented one,
+    # but the first live run got 401 on every lot with it. The site's own
+    # session also holds the (rotated) refresh token, so if the access
+    # token is rejected, fall back to the refresh token as the login and
+    # keep using whichever one works. The log records which one it was.
+    bearer = token
+    bearer_name = "access token"
     starred, failed = [], []
     for lot in lots:
         if already is not None and lot["lot_id"] in already:
             print(f"  Lot {lot['lot_number']}: already watched — skipped")
             starred.append(lot)
             continue
-        ok, note = star_one(token, lot["lot_id"], lot["lot_number"])
+        ok, note, auth_failed = star_one(bearer, lot["lot_id"],
+                                         lot["lot_number"])
+        if auth_failed and bearer_name == "access token" and new_refresh:
+            print(f"  Lot {lot['lot_number']}: access token rejected — "
+                  f"retrying with the refresh token as the login")
+            bearer = new_refresh
+            bearer_name = "refresh token"
+            ok, note, auth_failed = star_one(bearer, lot["lot_id"],
+                                             lot["lot_number"])
         print(f"  Lot {lot['lot_number']}: {note}")
         (starred if ok else failed).append(lot)
         time.sleep(0.3)
+    if starred and bearer_name != "access token":
+        print(f"\nNote: starring worked with the {bearer_name}, not the "
+              f"access token — the script will keep using it.")
 
     if failed:
         print(f"\n{len(failed)} lot(s) NOT starred:")
@@ -290,7 +311,7 @@ def main():
         print("\nNote: could not read the watchlist back for a second check — "
               "the per-lot replies above are the confirmation.")
     else:
-        after = get_watchlist_ids(token)
+        after = get_watchlist_ids(bearer)
         if after is not None:
             missing = [l for l in starred if l["lot_id"] not in after]
             if missing:
