@@ -64,12 +64,19 @@ REFRESH_HEADERS = [
     "-A", "PostmanRuntime/7.44.0",
 ]
 
-# The watchlist calls need the browser's header set (plain curl hangs).
+# The watchlist calls use the browser's exact header set, copied from a
+# captured live star call (DevTools -> Network -> watchlist). Plain curl
+# hangs on this API until the browser headers are present, and the calls
+# are rejected without them.
 STAR_HEADERS = [
     "-H", "Accept: */*",
     "-H", "Accept-Language: en-US,en;q=0.9",
     "-H", "Origin: https://www.mac.bid",
     "-H", "Referer: https://www.mac.bid/",
+    "-H", "Priority: u=1, i",
+    "-H", 'Sec-Ch-Ua: "Chromium";v="157", "Not-A.Brand";v="99"',
+    "-H", "Sec-Ch-Ua-Mobile: ?0",
+    "-H", 'Sec-Ch-Ua-Platform: "Windows"',
     "-H", "Sec-Fetch-Dest: empty",
     "-H", "Sec-Fetch-Mode: cors",
     "-H", "Sec-Fetch-Site: cross-site",
