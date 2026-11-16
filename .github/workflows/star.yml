@@ -1,0 +1,74 @@
+# MAC.BID automatic starring — refreshes the login, stars tonight's deals.
+#
+# Runs every day at 5:10pm Eastern (winter) — just after the 5pm deal report.
+# Schedule is in UTC: 22:10 UTC = 5:10 PM Eastern in winter (EST).
+# In summer (EDT) change the cron line to '10 21 * * *'.
+#
+# What each run does:
+#   1. Refreshes the MAC.BID login with the stored refresh token
+#      (PUT /auth/refresh-token) — no email/password, no SMS code.
+#   2. Scans live lots with the settings in config.yaml and stars the ones
+#      that match (retail >= min_retail, bid <= max_bid, at the warehouse
+#      or transferable there). A star only counts when the site confirms it.
+#   3. Saves the NEW refresh token back into the MACBID_REFRESH_TOKEN
+#      secret (every refresh rotates it — the old one stops working).
+#
+# Secrets needed (repo: Settings -> Secrets and variables -> Actions):
+#   MACBID_REFRESH_TOKEN - current refresh_token from the browser's mac_auths
+#       entry (DevTools -> Application -> Local Storage -> mac_auths on mac.bid).
+#       Re-copy it after any manual sign-in/refresh, since each refresh rotates it.
+#   MACBID_DEVICE_ID     - the device_id from the same place (localStorage).
+#   GH_PAT               - a classic personal access token (github.com/settings/tokens,
+#       scope: repo) so this workflow can update the MACBID_REFRESH_TOKEN secret.
+#       The built-in GITHUB_TOKEN cannot update secrets, so a PAT is required.
+#       If GH_PAT is missing or invalid, starring still runs, but the rotated
+#       token is NOT saved — and the next run will fail, because the old token
+#       is dead. Keep GH_PAT valid.
+#
+# If the refresh token ever dies (no successful run for 3 days), the refresh
+# step fails with a clear message: sign in on mac.bid again and update the
+# MACBID_REFRESH_TOKEN secret with the fresh value from mac_auths.
+#
+# The workflow never prints any token value. The new refresh token passes
+# through a file that is deleted right after use and is never committed.
+name: Star MAC.BID deals
+
+on:
+  schedule:
+    - cron: '10 22 * * *'
+  workflow_dispatch:  # lets you also run it manually from the Actions tab
+
+permissions:
+  contents: read
+
+jobs:
+  star:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Refresh login and star lots
+        env:
+          MACBID_REFRESH_TOKEN: ${{ secrets.MACBID_REFRESH_TOKEN }}
+          MACBID_DEVICE_ID: ${{ secrets.MACBID_DEVICE_ID }}
+          MACBID_TOKEN_OUT: new_refresh_token.txt
+        run: python3 star_action.py
+      - name: Save rotated refresh token
+        if: always()  # runs even if starring failed — the token already rotated
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          if [ ! -f new_refresh_token.txt ]; then
+            echo "No new refresh token was written (refresh must have failed) — secret not updated."
+            exit 0
+          fi
+          if [ -z "$GH_TOKEN" ]; then
+            echo "GH_PAT secret is not set — cannot save the rotated token. Starring may have succeeded, but the next run will fail because the old token is now dead. Set GH_PAT (classic PAT, repo scope) and update MACBID_REFRESH_TOKEN by hand."
+            rm -f new_refresh_token.txt
+            exit 1
+          fi
+          gh secret set MACBID_REFRESH_TOKEN --repo "${{ github.repository }}" --body "$(cat new_refresh_token.txt)"
+          rm -f new_refresh_token.txt
+          echo "Refresh token secret updated for the next run."
