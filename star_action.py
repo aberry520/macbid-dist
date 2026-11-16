@@ -132,7 +132,9 @@ def star_one(token, lot_id, lot_number):
     for attempt in (1, 2):
         code, data = curl_json(
             "POST", WATCHLIST_URL,
-            ["-H", f"Authorization: Bearer {token}",
+            # The site sends the token BARE here — no "Bearer " prefix.
+            # Sending "Bearer <token>" gets a 401 (proven by two live runs).
+            ["-H", f"Authorization: {token}",
              "-H", "Content-Type: application/json"] + STAR_HEADERS,
             {"auction_lot_id": lot_id})
         if code == 401:
@@ -155,7 +157,7 @@ def get_watchlist_ids(token):
     None when the list call is not supported."""
     code, data = curl_json(
         "GET", WATCHLIST_URL,
-        ["-H", f"Authorization: Bearer {token}"] + STAR_HEADERS)
+        ["-H", f"Authorization: {token}"] + STAR_HEADERS)  # bare, no Bearer
     if code != 200 or data is None:
         return None
     items = data if isinstance(data, list) else data.get("watchlist") \
@@ -266,8 +268,6 @@ def main():
               file=sys.stderr)
 
     token = access_token
-    if token.lower().startswith("bearer "):
-        token = token[7:].strip()
 
     already = get_watchlist_ids(token)
     if already is not None:
